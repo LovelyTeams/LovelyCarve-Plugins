@@ -1,0 +1,39 @@
+id = "org.lovelycarve.linuxinfo"
+name = "Linux信息"
+version = "1.0.0"
+protocol_min = 1
+protocol_max = 1
+permissions = ["emit_artifacts"]
+
+# linuxinfo.dll / liblinuxinfo.so, built from this crate by `just build-plugins`.
+# It parses untrusted evidence, so it keeps the default isolation = "process".
+[library]
+path = "linuxinfo"
+
+# 基本信息分析:适用于 Linux,依赖 filesystem,手动触发。
+[task]
+type = "baseinfo"
+platform = "linux"
+trigger = "manually"
+support = [
+  "系统信息",
+  "时区信息",
+  "用户列表",
+  "用户组",
+  "历史命令",
+  "登录信息",
+  "登录失败",
+  "开关机时间",
+  "网络信息",
+  "USB使用记录",
+  "服务列表",
+  "软件信息",
+  "定时任务",
+  "开机启动项",
+  "用户痕迹",
+]
+
+[[capabilities]]
+type = "evidence_analyzer"
+analyzer = "linuxbaseinfo"
+display = "Linux基本信息"

@@ -1,0 +1,19 @@
+# LovelyCarve DLL plugins: the plugin SDK (also the host's source of the C ABI
+# and LPP wire types), the out-of-process loader `lc-plugin-host`, and the
+# bundled plugins. `just build-plugins` builds this workspace and stages each
+# plugin library next to its plugin.toml; see docs/PLUGIN_PROTOCOL.md.
+[workspace]
+resolver = "2"
+members = ["sdk", "host", "linuxinfo"]
+
+[workspace.package]
+license = "AGPL-3.0-only"
+
+[profile.release]
+# The SDK turns panics into LPP errors at the C ABI boundary, which needs
+# unwinding in shipped builds too.
+panic = "unwind"
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

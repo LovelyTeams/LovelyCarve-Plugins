@@ -1,0 +1,21 @@
+[package]
+name = "lovelycarve-plugin"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "LovelyCarve plugin SDK: C ABI v1, LPP v1 wire types and the Rust plugin API"
+publish = false
+
+[features]
+# Host-side loading of plugin libraries (LovelyCarve and lc-plugin-host).
+# Plugins themselves never need it.
+loader = ["dep:libloading"]
+
+[dependencies]
+libloading = { version = "0.9", optional = true }
+rmp-serde = "1"
+rmpv = { version = "1", features = ["with-serde"] }
+serde = { version = "1", features = ["derive"] }
+
+[lints.clippy]
+uninlined_format_args = "warn"

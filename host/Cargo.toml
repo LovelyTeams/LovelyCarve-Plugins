@@ -1,0 +1,13 @@
+[package]
+name = "lc-plugin-host"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+description = "Out-of-process loader for LovelyCarve plugin libraries"
+publish = false
+
+[dependencies]
+lovelycarve-plugin = { path = "../sdk", features = ["loader"] }
+
+[lints.clippy]
+uninlined_format_args = "warn"

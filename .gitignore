@@ -1,0 +1,21 @@
+# Only maintained workspace directories are source inputs.
+/*/
+!/sdk/
+!/host/
+!/linuxinfo/
+!/scripts/
+target/
+/*/*.dll
+/*/*.so
+/*/*.dylib
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.log
+.vscode/
+.idea/
+.DS_Store
+__pycache__/
+.env
+.env.*
