@@ -1,4 +1,4 @@
-//! LPP v1 frames between LovelyCarve and `lc-plugin-host`: a four-byte
+//! LPP frames between LovelyCarve and `lc-plugin-host`: a four-byte
 //! big-endian payload length followed by a MessagePack map.
 //!
 //! Plugins never see frames — the C ABI carries bare method payloads — but
@@ -9,7 +9,8 @@ use std::io::{self, Read, Write};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u16 = 1;
+/// LPP version: 2 (typed record streams). Version 1 plugins are refused.
+pub const PROTOCOL_VERSION: u16 = 2;
 pub const MAX_FRAME_SIZE: usize = 8 * 1024 * 1024;
 
 fn nil() -> Value {

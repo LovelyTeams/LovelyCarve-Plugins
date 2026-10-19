@@ -1,29 +1,53 @@
-use rmpv::Value;
+use std::{collections::HashMap, sync::Arc};
 
-use crate::{value, wire::PROTOCOL_VERSION, EvidenceAnalyzer, FileAnalyzer, FileSystemParser};
+use crate::{
+    protocol::Hello,
+    record::{profile_fact_schema, Record},
+    schema::{schema_hash, validate_identifier, RecordSchema, MAX_RECORD_TYPES},
+    wire::PROTOCOL_VERSION,
+    Analyzer, FileSystemParser,
+};
 
-/// A plugin's identity and implementations. The constructor passed to
-/// [`crate::export_plugin!`] builds one per instance; the identity must match
-/// plugin.toml, and every capability declared there must be registered.
+/// SDK version reported in `plugin.hello`.
+pub const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// A plugin's record types and implementations. The constructor passed to
+/// [`crate::export_plugin!`] builds one per instance. The id must match the
+/// package manifest, every analyzer the manifest declares must be
+/// registered under its id, and every record type an analyzer emits must
+/// be registered with [`Plugin::record`].
 pub struct Plugin {
     pub(crate) id: String,
-    pub(crate) name: String,
-    pub(crate) version: String,
+    pub(crate) records: Vec<RecordSchema>,
+    pub(crate) analyzers: Vec<(String, Box<dyn Analyzer>)>,
     pub(crate) parsers: Vec<Box<dyn FileSystemParser>>,
-    pub(crate) file_analyzers: Vec<Box<dyn FileAnalyzer>>,
-    pub(crate) evidence_analyzers: Vec<Box<dyn EvidenceAnalyzer>>,
 }
 
 impl Plugin {
-    pub fn new(id: impl Into<String>, name: impl Into<String>, version: impl Into<String>) -> Self {
+    pub fn new(id: impl Into<String>) -> Self {
         Self {
             id: id.into(),
-            name: name.into(),
-            version: version.into(),
+            records: vec![profile_fact_schema()],
+            analyzers: Vec::new(),
             parsers: Vec::new(),
-            file_analyzers: Vec::new(),
-            evidence_analyzers: Vec::new(),
         }
+    }
+
+    /// Registers a record type.
+    pub fn record<R: Record>(self) -> Self {
+        self.schema(R::schema())
+    }
+
+    /// Registers a run-time schema (for [`crate::DynamicRecord`]).
+    pub fn schema(mut self, schema: RecordSchema) -> Self {
+        self.records.push(schema);
+        self
+    }
+
+    /// Registers an analyzer under the id its manifest declares.
+    pub fn analyzer(mut self, id: impl Into<String>, analyzer: impl Analyzer + 'static) -> Self {
+        self.analyzers.push((id.into(), Box::new(analyzer)));
+        self
     }
 
     pub fn filesystem(mut self, parser: impl FileSystemParser + 'static) -> Self {
@@ -31,40 +55,56 @@ impl Plugin {
         self
     }
 
-    pub fn file_analyzer(mut self, analyzer: impl FileAnalyzer + 'static) -> Self {
-        self.file_analyzers.push(Box::new(analyzer));
-        self
+    /// Checks ids, schemas and duplicates; a plugin that fails is refused
+    /// at the handshake.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.records.len() > MAX_RECORD_TYPES {
+            return Err(format!(
+                "a plugin registers at most {MAX_RECORD_TYPES} record types"
+            ));
+        }
+        let mut types = std::collections::HashSet::new();
+        for schema in &self.records {
+            schema.validate()?;
+            if !types.insert(schema.record_type.as_str()) {
+                return Err(format!(
+                    "record type {} is registered twice",
+                    schema.record_type
+                ));
+            }
+        }
+        let mut analyzers = std::collections::HashSet::new();
+        for (id, _) in &self.analyzers {
+            validate_identifier("analyzer id", id)?;
+            if !analyzers.insert(id.as_str()) {
+                return Err(format!("analyzer {id} is registered twice"));
+            }
+        }
+        Ok(())
     }
 
-    pub fn evidence_analyzer(mut self, analyzer: impl EvidenceAnalyzer + 'static) -> Self {
-        self.evidence_analyzers.push(Box::new(analyzer));
-        self
+    pub(crate) fn hello(&self) -> Hello {
+        Hello {
+            protocol: PROTOCOL_VERSION,
+            plugin: self.id.clone(),
+            sdk: SDK_VERSION.to_owned(),
+            analyzers: self.analyzers.iter().map(|(id, _)| id.clone()).collect(),
+            filesystems: self
+                .parsers
+                .iter()
+                .map(|parser| parser.filesystem().to_owned())
+                .collect(),
+            records: self.records.clone(),
+            schema_hash: schema_hash(&self.records),
+        }
     }
 
-    /// `plugin.hello` params: protocol range, identity and capabilities.
-    pub(crate) fn describe(&self) -> Value {
-        let mut capabilities = Vec::new();
-        if !self.parsers.is_empty() {
-            capabilities.push(Value::from("filesystem"));
-        }
-        if !self.file_analyzers.is_empty() {
-            capabilities.push(Value::from("file_analyzer"));
-        }
-        if !self.evidence_analyzers.is_empty() {
-            capabilities.push(Value::from("evidence_analyzer"));
-        }
-        value::map([
-            ("protocol_min", Value::from(PROTOCOL_VERSION)),
-            ("protocol_max", Value::from(PROTOCOL_VERSION)),
-            (
-                "plugin",
-                value::map([
-                    ("id", Value::from(self.id.as_str())),
-                    ("name", Value::from(self.name.as_str())),
-                    ("version", Value::from(self.version.as_str())),
-                ]),
-            ),
-            ("capabilities", Value::Array(capabilities)),
-        ])
+    pub(crate) fn schema_map(&self) -> Arc<HashMap<String, RecordSchema>> {
+        Arc::new(
+            self.records
+                .iter()
+                .map(|schema| (schema.record_type.clone(), schema.clone()))
+                .collect(),
+        )
     }
 }

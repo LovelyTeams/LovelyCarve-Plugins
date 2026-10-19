@@ -3,9 +3,10 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use lovelycarve_plugin::{text::split_lines, Artifact, Attributes, EvidenceVolume, Result, Value};
+use lovelycarve_plugin::{text::split_lines, Attributes, Result, Value, View};
 
 use crate::{
+    item::Artifact,
     list_or_empty,
     text::{clean_optional, clean_text, retain_truthy, strip},
 };
@@ -61,7 +62,7 @@ pub fn parse_init_script_header(head: &str) -> InitScriptHeader {
     header
 }
 
-pub fn collect(volume: &EvidenceVolume) -> Result<Collected> {
+pub fn collect(volume: &View) -> Result<Collected> {
     let mut services = Vec::new();
     let mut autostart = Vec::new();
     let mut enabled_units = HashSet::new();

@@ -50,6 +50,27 @@ impl HostConnection {
 
     pub(crate) fn call(&self, method: &str, params: &Value) -> Result<Value> {
         let params = value::encode(params)?;
+        self.call_bytes(method, &params)
+            .and_then(|reply| value::decode(&reply))
+    }
+
+    /// A typed host call: `params` and the reply are named MessagePack maps.
+    pub(crate) fn call_typed<P: serde::Serialize, R: for<'de> serde::Deserialize<'de>>(
+        &self,
+        method: &str,
+        params: &P,
+    ) -> Result<R> {
+        let params = crate::protocol::encode(params)?;
+        let reply = self.call_bytes(method, &params)?;
+        if reply.is_empty() {
+            return crate::protocol::decode(&[0xc0]);
+        }
+        crate::protocol::decode(&reply)
+    }
+
+    /// Sends encoded params and returns the encoded reply, or the decoded
+    /// `{code, message}` error.
+    pub(crate) fn call_bytes(&self, method: &str, params: &[u8]) -> Result<Vec<u8>> {
         let mut reply = Buffer::empty();
         // SAFETY: the host table is valid for the instance's lifetime, the
         // method and params slices outlive the call, and `reply` is released
@@ -58,15 +79,15 @@ impl HostConnection {
             (self.api.call)(
                 self.api.context,
                 Bytes::from_slice(method.as_bytes()),
-                Bytes::from_slice(&params),
+                Bytes::from_slice(params),
                 &mut reply,
             )
         };
-        let decoded = value::decode(unsafe { reply.as_slice() });
+        let bytes = unsafe { reply.as_slice() }.to_vec();
         unsafe { (self.api.free_buffer)(self.api.context, &mut reply) };
         match status {
-            abi::STATUS_OK => decoded,
-            abi::STATUS_ERROR => Err(match decoded {
+            abi::STATUS_OK => Ok(bytes),
+            abi::STATUS_ERROR => Err(match value::decode(&bytes) {
                 Ok(error) => Error::from_value(&error),
                 Err(error) => error,
             }),
@@ -119,20 +140,8 @@ impl Context {
         }
     }
 
-    /// Reports progress to the LovelyCarve task center (`host.progress`).
-    pub fn progress(&self, current: u64, total: Option<u64>, message: Option<&str>) -> Result<()> {
-        self.call_host(
-            "host.progress",
-            &value::map([
-                ("current", Value::from(current)),
-                ("total", value::optional_u64(total)),
-                ("message", value::optional_string(message)),
-            ]),
-        )
-        .map(drop)
-    }
-
-    /// Writes one line to the LovelyCarve log (target `plugin`).
+    /// Writes one line to the LovelyCarve log (target `plugin`) and the
+    /// plugin's own log file.
     pub fn log(&self, level: LogLevel, message: &str) {
         self.host.log(level, message);
     }
@@ -140,6 +149,16 @@ impl Context {
     pub(crate) fn call_host(&self, method: &str, params: &Value) -> Result<Value> {
         self.check_cancelled()?;
         self.host.call(method, params)
+    }
+
+    /// A typed host call that fails with `CANCELLED` once the request is.
+    pub(crate) fn call_typed<P: serde::Serialize, R: for<'de> serde::Deserialize<'de>>(
+        &self,
+        method: &str,
+        params: &P,
+    ) -> Result<R> {
+        self.check_cancelled()?;
+        self.host.call_typed(method, params)
     }
 
     pub(crate) fn host(&self) -> HostConnection {

@@ -2,9 +2,12 @@
 
 use std::collections::HashMap;
 
-use lovelycarve_plugin::{text::split_lines, Artifact, Attributes, EvidenceVolume, Result, Value};
+use lovelycarve_plugin::{text::split_lines, Attributes, Result, Value, View};
 
-use crate::text::{clean_text, is_digits, rfc3339};
+use crate::{
+    item::Artifact,
+    text::{clean_text, is_digits, rfc3339},
+};
 
 const PASSWORD_HASH_ALGORITHMS: [(&str, &str); 7] = [
     ("$1", "MD5"),
@@ -103,7 +106,7 @@ pub fn parse_group(text: Option<&str>) -> Vec<Attributes> {
     groups
 }
 
-pub fn collect(volume: &EvidenceVolume) -> Result<Vec<Artifact>> {
+pub fn collect(volume: &View) -> Result<Vec<Artifact>> {
     let mut artifacts = Vec::new();
     let policies =
         parse_shadow(crate::evidence::text(volume, "etc/shadow", 8 * 1024 * 1024)?.as_deref());
@@ -143,7 +146,7 @@ pub fn collect(volume: &EvidenceVolume) -> Result<Vec<Artifact>> {
     Ok(artifacts)
 }
 
-pub fn groups(volume: &EvidenceVolume) -> Result<Vec<Artifact>> {
+pub fn groups(volume: &View) -> Result<Vec<Artifact>> {
     Ok(
         parse_group(crate::evidence::text(volume, "etc/group", 8 * 1024 * 1024)?.as_deref())
             .into_iter()

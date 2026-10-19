@@ -2,12 +2,11 @@
 
 use std::{collections::HashMap, io::Write as _};
 
-use lovelycarve_plugin::{
-    text::split_lines, Artifact, Attributes, Error, EvidenceVolume, LogLevel, Result, Value,
-};
+use lovelycarve_plugin::{text::split_lines, Attributes, Error, LogLevel, Result, Value, View};
 use rusqlite::{Connection, OpenFlags};
 
 use crate::{
+    item::Artifact,
     text::{clean_optional, retain_truthy, rfc3339, strip},
     BINARY_DB_CAP,
 };
@@ -230,7 +229,7 @@ fn sqlite_error(error: rusqlite::Error) -> Error {
     Error::plugin(format!("rpmdb.sqlite: {error}"))
 }
 
-pub fn collect(volume: &EvidenceVolume) -> Result<Vec<Artifact>> {
+pub fn collect(volume: &View) -> Result<Vec<Artifact>> {
     let mut artifacts = Vec::new();
     let status = crate::evidence::text(volume, "var/lib/dpkg/status", 64 * 1024 * 1024)?;
     for mut attributes in parse_dpkg_status(status.as_deref()) {

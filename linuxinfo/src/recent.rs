@@ -1,10 +1,12 @@
 //! GTK recent documents (XBEL). URIs and application commands remain inert.
-use lovelycarve_plugin::{Artifact, Attributes, Error, EvidenceVolume, Result, Value};
+use lovelycarve_plugin::{Attributes, Error, Result, Value, View};
 use quick_xml::{
     events::{BytesStart, Event},
     Reader,
 };
 use std::collections::BTreeSet;
+
+use crate::item::Artifact;
 
 fn fields(element: &BytesStart<'_>) -> Result<Attributes> {
     element
@@ -88,9 +90,6 @@ fn parse(bytes: &[u8], user: &str, source: &str) -> Result<Vec<Artifact>> {
                                 value,
                                 attributes,
                             });
-                            if records.len() > 10_000 {
-                                return Err(Error::new("RESOURCE_LIMIT", "XBEL 超过 10000 条"));
-                            }
                         }
                     }
                     _ => {}
@@ -119,7 +118,7 @@ fn parse(bytes: &[u8], user: &str, source: &str) -> Result<Vec<Artifact>> {
     Ok(records)
 }
 
-pub fn collect(volume: &EvidenceVolume) -> Result<Vec<Artifact>> {
+pub fn collect(volume: &View) -> Result<Vec<Artifact>> {
     let mut homes = BTreeSet::new();
     for user in crate::users::parse_passwd(
         crate::evidence::text(volume, "etc/passwd", 8 * 1024 * 1024)?.as_deref(),

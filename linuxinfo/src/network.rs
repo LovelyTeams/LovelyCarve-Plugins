@@ -2,9 +2,10 @@
 
 use std::collections::HashMap;
 
-use lovelycarve_plugin::{text::split_lines, Artifact, Attributes, EvidenceVolume, Result};
+use lovelycarve_plugin::{text::split_lines, Attributes, Result, View};
 
 use crate::{
+    item::Artifact,
     list_or_empty,
     text::{
         cidr_to_mask, is_digits, or_else, retain_truthy, split_whitespace_max, strip, strip_quotes,
@@ -91,7 +92,7 @@ pub fn parse_shell_assignments(text: &str) -> Section {
     values
 }
 
-pub fn collect(volume: &EvidenceVolume) -> Result<Vec<Artifact>> {
+pub fn collect(volume: &View) -> Result<Vec<Artifact>> {
     let mut artifacts = Vec::new();
 
     for node in list_or_empty(volume, "etc/NetworkManager/system-connections")? {
@@ -204,7 +205,7 @@ fn network_artifact(title: &str, mut attributes: Attributes) -> Artifact {
 }
 
 /// Keep every hosts mapping, including IPv6 and aliases, with its source line.
-pub fn hosts(volume: &EvidenceVolume) -> Result<Vec<Artifact>> {
+pub fn hosts(volume: &View) -> Result<Vec<Artifact>> {
     let mut records = Vec::new();
     for (index, line) in crate::evidence::text(volume, "etc/hosts", 1024 * 1024)?
         .unwrap_or_default()

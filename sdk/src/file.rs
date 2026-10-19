@@ -1,91 +1,121 @@
-//! File analyzers: `analyzer.analyze` over one opaque logical file.
+//! Read-only file handles issued by the host for one run.
 
-use std::path::{Path, PathBuf};
+use std::{
+    io::{self, Read, Seek, SeekFrom},
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use rmpv::Value;
 
-use crate::{host::LogLevel, value, AnalysisResult, Context, Result, MAX_HOST_READ};
+use crate::{
+    host::LogLevel,
+    protocol::{self, method, FileHandleId, FileInfo, FileRead, FileReadv, Lease, LeaseId},
+    record::SourceRef,
+    text, value, Context, Error, Result,
+};
 
-/// An analyzer of single logical files (`[[capabilities]] type =
-/// "file_analyzer"`), scheduled from the file list's「插件分析任务」.
-///
-/// `analyze` runs on a host worker thread and may block for up to ten
-/// minutes. The file is only valid during the call.
-pub trait FileAnalyzer: Send + Sync {
-    /// Analyzer id; must match an `analyzer` capability in plugin.toml.
-    fn analyzer(&self) -> &str;
+/// Bytes the [`FileReader`] buffers per host read.
+const READER_BUFFER: usize = 1024 * 1024;
 
-    fn analyze(&self, file: &File) -> Result<AnalysisResult>;
-}
-
-/// An opaque, owner-scoped, read-only logical file. It never exposes the
-/// evidence path.
-pub struct File {
+/// An opaque, read-only logical file: an input of the run or a file opened
+/// through its view. It never exposes the evidence path.
+#[derive(Clone)]
+pub struct FileRef {
     context: Context,
-    file_id: String,
-    name: String,
-    size: u64,
-    mime: String,
+    info: Arc<FileInfo>,
 }
 
-impl File {
-    pub(crate) fn from_params(context: Context, handle: &Value) -> Result<Self> {
-        Ok(Self {
-            file_id: value::required_str(handle, "file_id")?.to_owned(),
-            name: value::optional_str(handle, "name")
-                .unwrap_or_default()
-                .to_owned(),
-            size: value::required_u64(handle, "size")?,
-            mime: value::optional_str(handle, "mime")
-                .unwrap_or("application/octet-stream")
-                .to_owned(),
+impl FileRef {
+    pub(crate) fn new(context: Context, info: FileInfo) -> Self {
+        Self {
             context,
-        })
+            info: Arc::new(info),
+        }
     }
 
     pub fn id(&self) -> &str {
-        &self.file_id
+        &self.info.file_id
     }
 
     /// Display name; not a host path.
     pub fn name(&self) -> &str {
-        &self.name
+        &self.info.name
     }
 
     pub fn size(&self) -> u64 {
-        self.size
+        self.info.size
     }
 
-    pub fn mime(&self) -> &str {
-        &self.mime
+    pub fn mime(&self) -> Option<&str> {
+        self.info.mime.as_deref()
+    }
+
+    /// Path inside the run's view.
+    pub fn view_path(&self) -> Option<&str> {
+        self.info.view_path.as_deref()
+    }
+
+    /// Volume key the file lives on (`part:1`).
+    pub fn root(&self) -> Option<&str> {
+        self.info.root.as_deref()
+    }
+
+    /// Path inside that volume.
+    pub fn root_path(&self) -> Option<&str> {
+        self.info.root_path.as_deref()
+    }
+
+    pub fn deleted(&self) -> bool {
+        self.info.deleted
+    }
+
+    pub fn info(&self) -> &FileInfo {
+        &self.info
     }
 
     pub fn context(&self) -> &Context {
         &self.context
     }
 
+    /// Provenance of the whole file.
+    pub fn source(&self) -> SourceRef {
+        SourceRef {
+            root: self.info.root.clone(),
+            path: self
+                .info
+                .root_path
+                .clone()
+                .or_else(|| self.info.view_path.clone()),
+            node_id: self.info.node_id.clone(),
+            ..SourceRef::default()
+        }
+    }
+
+    /// Provenance of `length` bytes at `offset`.
+    pub fn source_at(&self, offset: u64, length: u64) -> SourceRef {
+        self.source().at(offset, length)
+    }
+
     /// Reads up to `length` bytes at `offset`, clamped at the end of file.
-    pub fn read(&self, offset: u64, length: usize) -> Result<Vec<u8>> {
-        if length == 0 || offset >= self.size {
+    pub fn read_at(&self, offset: u64, length: usize) -> Result<Vec<u8>> {
+        if length == 0 || offset >= self.size() {
             return Ok(Vec::new());
         }
-        let end = offset.saturating_add(length as u64).min(self.size);
-        let mut output = Vec::with_capacity((end - offset) as usize);
+        let end = offset.saturating_add(length as u64).min(self.size());
+        let mut output = Vec::with_capacity(usize::try_from(end - offset).unwrap_or(0));
         let mut position = offset;
         while position < end {
             let chunk = value::into_bytes(
                 self.context.call_host(
-                    "file.read",
-                    &value::map([
-                        ("file_id", Value::from(self.file_id.as_str())),
-                        ("offset", Value::from(position)),
-                        (
-                            "length",
-                            Value::from((end - position).min(MAX_HOST_READ as u64)),
-                        ),
-                    ]),
+                    method::FILE_READ,
+                    &protocol::to_value(&FileRead {
+                        file_id: self.info.file_id.clone(),
+                        offset: position,
+                        length: (end - position).min(protocol::MAX_READ),
+                    })?,
                 )?,
-                "file.read",
+                method::FILE_READ,
             )?;
             if chunk.is_empty() {
                 break;
@@ -96,37 +126,160 @@ impl File {
         Ok(output)
     }
 
-    /// Reads several ranges in one host call (at most 64 ranges, 16 MiB).
-    pub fn readv(&self, ranges: &[(u64, usize)]) -> Result<Vec<Vec<u8>>> {
-        let result = self.context.call_host(
-            "file.readv",
-            &value::map([
-                ("file_id", Value::from(self.file_id.as_str())),
-                ("ranges", value::ranges(ranges)),
-            ]),
-        )?;
-        value::into_byte_list(result, "file.readv")
+    /// The whole file. Fails with `RESOURCE_LIMIT` when it is larger than
+    /// `cap` and with `SHORT_READ` when the host returns fewer bytes than
+    /// the file's size: a truncated read is never treated as complete.
+    pub fn read_all(&self, cap: u64) -> Result<Vec<u8>> {
+        if self.size() > cap {
+            return Err(Error::new(
+                "RESOURCE_LIMIT",
+                format!(
+                    "{} is {} bytes; the limit is {cap}",
+                    self.name(),
+                    self.size()
+                ),
+            ));
+        }
+        let bytes = self.read_at(0, usize::try_from(self.size()).unwrap_or(usize::MAX))?;
+        if bytes.len() as u64 != self.size() {
+            return Err(Error::new(
+                "SHORT_READ",
+                format!(
+                    "{}: read {} of {} bytes",
+                    self.name(),
+                    bytes.len(),
+                    self.size()
+                ),
+            ));
+        }
+        Ok(bytes)
     }
 
-    /// Copies the file into a host-owned temporary path for native
-    /// libraries that need one. Requires the `file_materialize` permission;
-    /// the lease is released when the returned value is dropped.
+    /// The first `cap` bytes as text (UTF-8, invalid bytes replaced).
+    pub fn read_text(&self, cap: u64) -> Result<String> {
+        let length = self.size().min(cap);
+        let bytes = self.read_at(0, usize::try_from(length).unwrap_or(usize::MAX))?;
+        Ok(text::decode_lossy(&bytes))
+    }
+
+    /// [`FileRef::read_text`] split into lines.
+    pub fn read_lines(&self, cap: u64) -> Result<Vec<String>> {
+        Ok(text::split_lines(&self.read_text(cap)?)
+            .into_iter()
+            .map(str::to_owned)
+            .collect())
+    }
+
+    /// Several ranges in one host call (at most 64 ranges, 8 MiB).
+    pub fn readv(&self, ranges: &[(u64, usize)]) -> Result<Vec<Vec<u8>>> {
+        let result = self.context.call_host(
+            method::FILE_READV,
+            &protocol::to_value(&FileReadv {
+                file_id: self.info.file_id.clone(),
+                ranges: ranges
+                    .iter()
+                    .map(|(offset, length)| (*offset, *length as u64))
+                    .collect(),
+            })?,
+        )?;
+        value::into_byte_list(result, method::FILE_READV)
+    }
+
+    /// A buffered `Read + Seek` view of the file.
+    pub fn reader(&self) -> FileReader {
+        FileReader {
+            file: self.clone(),
+            position: 0,
+            buffer: Vec::new(),
+            buffer_start: 0,
+        }
+    }
+
+    /// Copies the file to a host-owned temporary path for native libraries
+    /// that need one. Requires the `file_materialize` permission; the copy
+    /// is removed when the returned value is dropped.
     pub fn materialize(&self) -> Result<MaterializedFile> {
-        let lease = self.context.call_host(
-            "file.materialize",
-            &value::map([("file_id", Value::from(self.file_id.as_str()))]),
+        let lease: Lease = self.context.call_typed(
+            method::FILE_MATERIALIZE,
+            &FileHandleId {
+                file_id: self.info.file_id.clone(),
+            },
         )?;
         Ok(MaterializedFile {
             context: self.context.clone(),
-            lease_id: value::required_str(&lease, "lease_id")?.to_owned(),
-            path: PathBuf::from(value::required_str(&lease, "path")?),
-            size: value::required_u64(&lease, "size")?,
+            lease_id: lease.lease_id,
+            path: PathBuf::from(lease.path),
+            size: lease.size,
             released: false,
         })
     }
 }
 
-/// A host-owned temporary copy of a logical file.
+impl std::fmt::Debug for FileRef {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("FileRef")
+            .field("file_id", &self.info.file_id)
+            .field("name", &self.info.name)
+            .field("size", &self.info.size)
+            .finish()
+    }
+}
+
+/// A buffered reader over a [`FileRef`].
+pub struct FileReader {
+    file: FileRef,
+    position: u64,
+    buffer: Vec<u8>,
+    buffer_start: u64,
+}
+
+impl Read for FileReader {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        if output.is_empty() || self.position >= self.file.size() {
+            return Ok(0);
+        }
+        let buffer_end = self.buffer_start + self.buffer.len() as u64;
+        if self.position < self.buffer_start || self.position >= buffer_end {
+            self.buffer = self
+                .file
+                .read_at(self.position, READER_BUFFER)
+                .map_err(io::Error::other)?;
+            self.buffer_start = self.position;
+            if self.buffer.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    format!("{}: the host returned no bytes", self.file.name()),
+                ));
+            }
+        }
+        let start = (self.position - self.buffer_start) as usize;
+        let count = output.len().min(self.buffer.len() - start);
+        output[..count].copy_from_slice(&self.buffer[start..start + count]);
+        self.position += count as u64;
+        Ok(count)
+    }
+}
+
+impl Seek for FileReader {
+    fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+        let target = match position {
+            SeekFrom::Start(offset) => Some(offset),
+            SeekFrom::End(delta) => self.file.size().checked_add_signed(delta),
+            SeekFrom::Current(delta) => self.position.checked_add_signed(delta),
+        };
+        let target = target.ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "seek before the start of the file",
+            )
+        })?;
+        self.position = target;
+        Ok(target)
+    }
+}
+
+/// A host-owned temporary copy of a file.
 pub struct MaterializedFile {
     context: Context,
     lease_id: String,
@@ -144,7 +297,7 @@ impl MaterializedFile {
         self.size
     }
 
-    /// Releases the lease now instead of on drop.
+    /// Releases the copy now instead of on drop.
     pub fn release(mut self) -> Result<()> {
         self.release_lease()
     }
@@ -154,13 +307,15 @@ impl MaterializedFile {
             return Ok(());
         }
         self.released = true;
-        // Release even when the request was cancelled; the host also drops
-        // every lease after the analysis ends.
+        // Release even when the run was cancelled; the host also drops every
+        // lease when the run ends.
         self.context
             .host()
-            .call(
-                "file.release",
-                &value::map([("lease_id", Value::from(self.lease_id.as_str()))]),
+            .call_typed::<_, Value>(
+                method::FILE_RELEASE,
+                &LeaseId {
+                    lease_id: self.lease_id.clone(),
+                },
             )
             .map(drop)
     }
@@ -171,7 +326,7 @@ impl Drop for MaterializedFile {
         if let Err(error) = self.release_lease() {
             self.context.log(
                 LogLevel::Debug,
-                &format!("materialized file lease release failed: {error}"),
+                &format!("materialized file release failed: {error}"),
             );
         }
     }

@@ -3,7 +3,7 @@
 
 use rmpv::Value;
 
-use crate::{value, Attributes, Error, Result, Source};
+use crate::{value, Error, Result, Source};
 
 /// A parser for one filesystem family (`[[capabilities]] type =
 /// "filesystem"`).
@@ -131,24 +131,9 @@ impl Timestamps {
             ("birth", value::optional_string(self.birth.as_deref())),
         ])
     }
-
-    pub(crate) fn from_value(timestamps: Option<&Value>) -> Self {
-        let field = |name: &str| {
-            timestamps
-                .and_then(|timestamps| value::optional_str(timestamps, name))
-                .map(str::to_owned)
-        };
-        Self {
-            modified: field("modified"),
-            accessed: field("accessed"),
-            created: field("created"),
-            mft_changed: field("mft_changed"),
-            birth: field("birth"),
-        }
-    }
 }
 
-/// A directory entry (LPP v1 `FsNode`).
+/// A directory entry (`FsNode` of the filesystem methods).
 #[derive(Clone, Debug, PartialEq)]
 pub struct FsNode {
     pub id: String,
@@ -273,6 +258,99 @@ impl NodePage {
                 value::optional_u64(self.total.map(|total| total as u64)),
             ),
         ])
+    }
+}
+
+/// Ordered attribute map with dictionary semantics: inserting an existing
+/// key replaces its value in place. Keys are namespaced (`vendorfs.flags`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Attributes {
+    entries: Vec<(String, Value)>,
+}
+
+impl Attributes {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert(&mut self, key: impl Into<String>, value: impl Into<Value>) {
+        let key = key.into();
+        let value = value.into();
+        match self
+            .entries
+            .iter_mut()
+            .find(|(existing, _)| *existing == key)
+        {
+            Some(entry) => entry.1 = value,
+            None => self.entries.push((key, value)),
+        }
+    }
+
+    /// Inserts `Some` values and `nil` for `None`.
+    pub fn insert_optional(&mut self, key: impl Into<String>, value: Option<impl Into<Value>>) {
+        self.insert(key, value.map(Into::into).unwrap_or(Value::Nil));
+    }
+
+    pub fn get(&self, key: &str) -> Option<&Value> {
+        self.entries
+            .iter()
+            .find_map(|(existing, value)| (existing == key).then_some(value))
+    }
+
+    pub fn contains_key(&self, key: &str) -> bool {
+        self.get(key).is_some()
+    }
+
+    /// Inserts every entry of `other`, replacing existing keys.
+    pub fn update(&mut self, other: &Attributes) {
+        for (key, value) in &other.entries {
+            self.insert(key.clone(), value.clone());
+        }
+    }
+
+    pub fn retain(&mut self, mut keep: impl FnMut(&str, &Value) -> bool) {
+        self.entries.retain(|(key, value)| keep(key, value));
+    }
+
+    pub fn remove(&mut self, key: &str) -> Option<Value> {
+        let index = self
+            .entries
+            .iter()
+            .position(|(existing, _)| existing == key)?;
+        Some(self.entries.remove(index).1)
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &Value)> {
+        self.entries
+            .iter()
+            .map(|(key, value)| (key.as_str(), value))
+    }
+
+    pub fn to_value(&self) -> Value {
+        Value::Map(
+            self.entries
+                .iter()
+                .map(|(key, value)| (Value::from(key.as_str()), value.clone()))
+                .collect(),
+        )
+    }
+}
+
+impl<K: Into<String>, V: Into<Value>> FromIterator<(K, V)> for Attributes {
+    fn from_iter<I: IntoIterator<Item = (K, V)>>(entries: I) -> Self {
+        let mut attributes = Self::new();
+        for (key, value) in entries {
+            attributes.insert(key, value);
+        }
+        attributes
     }
 }
 

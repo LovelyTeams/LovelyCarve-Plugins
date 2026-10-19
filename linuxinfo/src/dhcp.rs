@@ -1,7 +1,9 @@
 //! NetworkManager DHCP and Avahi IPv6 addresses retained as historical observations.
 //! Explicit epoch timestamps in NM messages are UTC; the syslog clock is not.
-use lovelycarve_plugin::{Artifact, Attributes, Error, EvidenceVolume, Result};
+use lovelycarve_plugin::{Attributes, Error, Result, View};
 use std::{collections::BTreeMap, io::Read};
+
+use crate::item::Artifact;
 
 fn record(interface: &str, mut attributes: Attributes) -> Artifact {
     attributes.insert("linux.iface", interface);
@@ -120,9 +122,6 @@ fn parse(
                 }
             }
         }
-        if records.len() > 10_000 {
-            return Err(Error::new("RESOURCE_LIMIT", "DHCP 记录超过 10000 条"));
-        }
     }
     for (interface, attributes) in pending {
         if attributes.contains_key("linux.ipv4") {
@@ -132,7 +131,7 @@ fn parse(
     Ok(records)
 }
 
-pub fn collect(volume: &EvidenceVolume) -> Result<Vec<Artifact>> {
+pub fn collect(volume: &View) -> Result<Vec<Artifact>> {
     let mut records = Vec::new();
     for file in crate::list_or_empty(volume, "var/log")? {
         if file.deleted
@@ -165,9 +164,6 @@ pub fn collect(volume: &EvidenceVolume) -> Result<Vec<Artifact>> {
             &path,
             || volume.context().check_cancelled(),
         )?);
-        if records.len() > 10_000 {
-            return Err(Error::new("RESOURCE_LIMIT", "DHCP 记录超过 10000 条"));
-        }
     }
     Ok(records)
 }

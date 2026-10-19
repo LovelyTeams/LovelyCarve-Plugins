@@ -1,9 +1,9 @@
 [package]
 name = "linuxinfo-plugin"
-version = "1.0.0"
+version = "2.0.0"
 edition = "2021"
 license.workspace = true
-description = "LovelyCarve Linux base-information evidence analyzer (linuxbaseinfo)"
+description = "LovelyCarve Linux base-information system analyzer (linuxbaseinfo)"
 publish = false
 
 [lib]
@@ -17,6 +17,9 @@ rusqlite = { version = "0.40", features = ["bundled"] }
 tempfile = "3"
 quick-xml = "0.37.5"
 flate2 = "1"
+
+[dev-dependencies]
+lovelycarve-plugin = { path = "../sdk", features = ["testing"] }
 
 [lints.rust]
 # MSVC link.exe reports the import library it creates for every DLL.

@@ -1,6 +1,7 @@
 # Only maintained workspace directories are source inputs.
 /*/
 !/sdk/
+!/sdk-derive/
 !/host/
 !/linuxinfo/
 !/scripts/
@@ -8,6 +9,9 @@ target/
 /*/*.dll
 /*/*.so
 /*/*.dylib
+# Written by the plugin build from the library (lc-plugin-host --describe).
+/*/schema.json
+/*.lcpkg
 *.pdb
 *.ilk
 *.exp

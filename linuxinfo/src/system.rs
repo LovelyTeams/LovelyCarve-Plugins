@@ -3,9 +3,10 @@
 
 use std::collections::HashMap;
 
-use lovelycarve_plugin::{text::split_lines, Artifact, EvidenceVolume, Result};
+use lovelycarve_plugin::{text::split_lines, Result, View};
 
 use crate::{
+    item::Artifact,
     list_or_empty,
     text::{lstrip, strip, strip_quotes},
 };
@@ -24,7 +25,7 @@ pub fn parse_os_release(text: Option<&str>) -> HashMap<String, String> {
 }
 
 /// One record per source field, matching the report's name/key/value layout.
-pub fn collect(volume: &EvidenceVolume) -> Result<Vec<Artifact>> {
+pub fn collect(volume: &View) -> Result<Vec<Artifact>> {
     let source = if volume.exists("etc/os-release")? {
         "etc/os-release"
     } else {
@@ -95,7 +96,7 @@ fn field(name: &str, key: &str, value: &str, source: &str) -> Artifact {
 }
 
 /// The zone identifier comes from evidence; DST is date-dependent and is not inferred from the host clock.
-pub fn timezone(volume: &EvidenceVolume) -> Result<Vec<Artifact>> {
+pub fn timezone(volume: &View) -> Result<Vec<Artifact>> {
     let mut zone =
         crate::evidence::text(volume, "etc/timezone", 4096)?.map(|text| text.trim().to_owned());
     let mut source = "etc/timezone";

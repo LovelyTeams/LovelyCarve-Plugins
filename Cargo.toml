@@ -4,7 +4,7 @@
 # plugin library next to its plugin.toml; see docs/PLUGIN_PROTOCOL.md.
 [workspace]
 resolver = "2"
-members = ["sdk", "host", "linuxinfo"]
+members = ["sdk", "sdk-derive", "host", "linuxinfo"]
 
 [workspace.package]
 license = "AGPL-3.0-only"

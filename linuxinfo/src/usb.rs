@@ -3,11 +3,12 @@
 use chrono::{DateTime, NaiveDate};
 use std::collections::HashMap;
 
-use lovelycarve_plugin::{
-    text::split_lines, Artifact, Attributes, EvidenceVolume, Result, TimelineEvent, Value,
-};
+use lovelycarve_plugin::{text::split_lines, Attributes, Result, Value, View};
 
-use crate::text::{clean_text, is_digits, is_space, retain_truthy, split_whitespace};
+use crate::{
+    item::Artifact,
+    text::{clean_text, is_digits, is_space, retain_truthy, split_whitespace},
+};
 
 const USB_LOG_MARKERS: [&str; 12] = [
     "New USB device found",
@@ -77,9 +78,11 @@ pub fn syslog_timestamp(line: &str, year: i32) -> Option<String> {
     )
 }
 
-pub fn collect(volume: &EvidenceVolume) -> Result<(Vec<Artifact>, Vec<TimelineEvent>)> {
+/// USB log lines. Lines with an explicit time that mark storage or mount
+/// events also carry it as `linux.timeline_time`, the only ones that go on
+/// the case timeline.
+pub fn collect(volume: &View) -> Result<Vec<Artifact>> {
     let mut artifacts = Vec::new();
-    let mut timeline = Vec::new();
     let nodes = crate::list_or_empty(volume, "var/log")?;
     let logs: HashMap<_, _> = nodes
         .into_iter()
@@ -129,6 +132,11 @@ pub fn collect(volume: &EvidenceVolume) -> Result<(Vec<Artifact>, Vec<TimelineEv
                     "linux.time_basis",
                     "日志本地时间；若补足年份，则来自源文件修改时间",
                 );
+            } else if TIMELINE_MARKERS
+                .iter()
+                .any(|marker| raw_line.contains(marker))
+            {
+                attributes.insert_optional("linux.timeline_time", explicit.as_deref());
             }
             retain_truthy(&mut attributes);
             artifacts.push(Artifact {
@@ -137,31 +145,9 @@ pub fn collect(volume: &EvidenceVolume) -> Result<(Vec<Artifact>, Vec<TimelineEv
                 value: Some(Value::from(name)),
                 attributes,
             });
-            if let Some(when) = explicit {
-                if TIMELINE_MARKERS
-                    .iter()
-                    .any(|marker| raw_line.contains(marker))
-                {
-                    let mut attributes = Attributes::new();
-                    attributes.insert("linux.log", name);
-                    timeline.push(TimelineEvent {
-                        timestamp: when,
-                        event_type: "linux.usb".to_owned(),
-                        description: clean_text(raw_line, 200)
-                            .unwrap_or_else(|| "USB 事件".to_owned()),
-                        attributes,
-                    });
-                }
-            }
-            if artifacts.len() + timeline.len() > 10_000 {
-                return Err(lovelycarve_plugin::Error::new(
-                    "RESOURCE_LIMIT",
-                    "USB 日志超过 10000 项",
-                ));
-            }
         }
     }
-    Ok((artifacts, timeline))
+    Ok(artifacts)
 }
 
 #[cfg(test)]

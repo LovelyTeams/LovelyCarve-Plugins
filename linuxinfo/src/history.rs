@@ -1,9 +1,9 @@
 //! Bash and Zsh histories, one artifact per logical command, with evidence timestamps only.
 use std::collections::BTreeSet;
 
-use lovelycarve_plugin::{Artifact, Attributes, Error, EvidenceVolume, Result};
+use lovelycarve_plugin::{Attributes, Error, Result, View};
 
-use crate::{text::rfc3339, users::parse_passwd};
+use crate::{item::Artifact, text::rfc3339, users::parse_passwd};
 
 pub fn parse(text: &str, user: &str, shell: &str, source: &str) -> Vec<Artifact> {
     let mut records = Vec::new();
@@ -84,7 +84,7 @@ pub fn parse(text: &str, user: &str, shell: &str, source: &str) -> Vec<Artifact>
     records
 }
 
-pub fn collect(volume: &EvidenceVolume) -> Result<Vec<Artifact>> {
+pub fn collect(volume: &View) -> Result<Vec<Artifact>> {
     let mut homes = BTreeSet::from([("root".to_owned(), "root".to_owned())]);
     for user in
         parse_passwd(crate::evidence::text(volume, "etc/passwd", 8 * 1024 * 1024)?.as_deref())

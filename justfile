@@ -4,7 +4,7 @@ set windows-shell := ["pwsh", "-NoProfile", "-Command"]
 default:
     @just --list
 
-# Build the host and stage linuxinfo; pass --release for shipping libraries.
+# Build the host and stage every plugin package (library and schema.json); pass --release for shipping libraries.
 build *args:
     bun scripts/build.mjs {{ args }}
 
@@ -12,7 +12,7 @@ build *args:
 test *args:
     cargo test --locked --workspace {{ args }}
 
-# Lint the SDK, process host and analyzer.
+# Lint the SDK, process host and plugins.
 clippy:
     cargo clippy --locked --workspace --all-targets
 

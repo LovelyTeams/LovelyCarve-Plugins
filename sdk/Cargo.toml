@@ -1,21 +1,32 @@
 [package]
 name = "lovelycarve-plugin"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license.workspace = true
-description = "LovelyCarve plugin SDK: C ABI v1, LPP v1 wire types and the Rust plugin API"
+description = "LovelyCarve plugin SDK: C ABI v1, LPP v2 payloads, record schemas and the Rust plugin API"
 publish = false
 
 [features]
-# Host-side loading of plugin libraries (LovelyCarve and lc-plugin-host).
-# Plugins themselves never need it.
+default = ["derive"]
+# `#[derive(Record)]` for plugin record types.
+derive = ["dep:lovelycarve-plugin-derive"]
+# Host-side loading of plugin libraries and the LPP frame bridge
+# (lc-plugin-host, and LovelyCarve's loopback tests). Plugins themselves
+# never need it.
 loader = ["dep:libloading"]
+# `testing::Harness`: runs analyzers against local directories.
+testing = []
 
 [dependencies]
 libloading = { version = "0.9", optional = true }
+lovelycarve-plugin-derive = { path = "../sdk-derive", optional = true }
+rmp = "0.8"
 rmp-serde = "1"
 rmpv = { version = "1", features = ["with-serde"] }
 serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3"
 
 [lints.clippy]
 uninlined_format_args = "warn"

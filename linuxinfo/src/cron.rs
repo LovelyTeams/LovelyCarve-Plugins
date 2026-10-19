@@ -1,8 +1,9 @@
 //! 定时任务: /etc/crontab and the per-user crontabs under var/spool/cron.
 
-use lovelycarve_plugin::{text::split_lines, Artifact, Attributes, EvidenceVolume, Result, Value};
+use lovelycarve_plugin::{text::split_lines, Attributes, Result, Value, View};
 
 use crate::{
+    item::Artifact,
     list_or_empty,
     text::{clean_text, is_upper, split_whitespace, split_whitespace_max, strip},
 };
@@ -90,7 +91,7 @@ pub fn parse_crontab(
     entries
 }
 
-pub fn collect(volume: &EvidenceVolume) -> Result<Vec<Artifact>> {
+pub fn collect(volume: &View) -> Result<Vec<Artifact>> {
     let mut artifacts = parse_crontab(
         crate::evidence::text(volume, "etc/crontab", 1024 * 1024)?.as_deref(),
         "system",

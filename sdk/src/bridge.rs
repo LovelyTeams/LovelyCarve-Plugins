@@ -1,4 +1,10 @@
-//! LPP v1 frames on one side, the plugin's C ABI on the other.
+//! LPP frames on one side, a plugin's C ABI on the other (feature
+//! `loader`).
+//!
+//! `lc-plugin-host` serves a plugin library this way over its stdin and
+//! stdout; LovelyCarve's tests serve an entry point over in-memory pipes
+//! (a loopback transport), so they exercise the same protocol path as a
+//! plugin process without starting one.
 
 use std::{
     collections::HashMap,
@@ -12,12 +18,14 @@ use std::{
     thread,
 };
 
-use lovelycarve_plugin::{
+use rmpv::Value;
+
+use crate::{
     abi::{self, Buffer, Bytes, EntryFn, HostApiV1},
     loader::PluginInstance,
-    value,
+    protocol, value,
     wire::{self, LppMessage, RpcError, MAX_FRAME_SIZE},
-    Error, Value,
+    Error,
 };
 
 /// Plugin calls may recurse deeply in parsers of hostile data.
@@ -56,6 +64,40 @@ pub fn serve(
     outcome
 }
 
+/// The library's `plugin.hello`. The library runs with a host table that
+/// refuses every call, so describing reads no evidence.
+pub fn describe(entry: EntryFn) -> crate::Result<protocol::Hello> {
+    let host: &'static HostApiV1 = Box::leak(Box::new(HostApiV1 {
+        abi_version: abi::ABI_VERSION,
+        struct_size: abi::HOST_API_SIZE,
+        context: std::ptr::null_mut(),
+        call: refusing_host_call,
+        free_buffer: host_free_buffer,
+        log: host_log,
+    }));
+    let plugin = unsafe { PluginInstance::create(entry, host) }?;
+    protocol::from_value(plugin.describe()?)
+}
+
+unsafe extern "C" fn refusing_host_call(
+    _context: *mut c_void,
+    _method: Bytes,
+    _params: Bytes,
+    out: *mut Buffer,
+) -> i32 {
+    if out.is_null() {
+        return abi::STATUS_INVALID_ARGUMENT;
+    }
+    let error = Error::new("HOST_UNAVAILABLE", "describe mode serves no host calls");
+    match value::encode(&error.to_value()) {
+        Ok(bytes) => {
+            unsafe { out.write(Buffer::from_vec(bytes)) };
+            abi::STATUS_ERROR
+        }
+        Err(_) => abi::STATUS_INVALID_ARGUMENT,
+    }
+}
+
 struct Bridge {
     output: Mutex<Box<dyn Write + Send>>,
     /// Plugin → host requests waiting for their response.
@@ -66,7 +108,7 @@ struct Bridge {
 
 impl Bridge {
     fn handshake(&self, input: &mut impl Read, hello: Value) -> io::Result<()> {
-        self.send(&LppMessage::request(1, "plugin.hello", hello))?;
+        self.send(&LppMessage::request(1, protocol::method::HELLO, hello))?;
         match wire::read_frame(input)? {
             Some(LppMessage::Response {
                 id: 1, error: None, ..
@@ -100,7 +142,7 @@ impl Bridge {
                 LppMessage::Request {
                     id, method, params, ..
                 } if id % 2 == 0 => {
-                    if method == "plugin.shutdown" {
+                    if method == protocol::method::SHUTDOWN {
                         // Close sessions, answer, then let the process exit.
                         return self.send_reply(id, respond(plugin, id, &method, &params));
                     }
@@ -316,37 +358,31 @@ mod tests {
         time::Duration,
     };
 
-    use lovelycarve_plugin::{
-        abi::PluginApiV1, runtime, AnalysisResult, File, FileAnalyzer, Plugin,
-    };
+    use crate::{abi::PluginApiV1, runtime, Plugin, Run};
 
     use super::*;
 
-    struct Head;
-
-    impl FileAnalyzer for Head {
-        fn analyzer(&self) -> &str {
-            "test.head"
-        }
-
-        fn analyze(&self, file: &File) -> lovelycarve_plugin::Result<AnalysisResult> {
-            if file.name() == "wait" {
-                file.context().progress(1, None, None)?;
-                while !file.context().is_cancelled() {
-                    thread::sleep(Duration::from_millis(2));
-                }
-                return Err(Error::cancelled());
+    /// Reads the first input's head into the summary; `wait` blocks until
+    /// the run is cancelled.
+    fn head(run: &Run) -> crate::Result<()> {
+        let file = run
+            .inputs()
+            .first()
+            .ok_or_else(|| Error::invalid_params("no input"))?;
+        if file.name() == "wait" {
+            run.progress(1, None, None)?;
+            while !run.is_cancelled() {
+                thread::sleep(Duration::from_millis(2));
             }
-            let head = file.read(0, 4)?;
-            Ok(AnalysisResult {
-                summary: Some(String::from_utf8_lossy(&head).into_owned()),
-                ..AnalysisResult::default()
-            })
+            return Err(Error::cancelled());
         }
+        let head = file.read_at(0, 4)?;
+        run.set_summary(String::from_utf8_lossy(&head));
+        Ok(())
     }
 
     fn test_plugin() -> Plugin {
-        Plugin::new("org.test.bridge", "Bridge test", "1").file_analyzer(Head)
+        Plugin::new("org.test.bridge").analyzer("head", head)
     }
 
     unsafe extern "C" fn test_entry(host: *const HostApiV1, plugin: *mut PluginApiV1) -> i32 {
@@ -380,9 +416,10 @@ mod tests {
             else {
                 panic!("expected plugin.hello");
             };
-            assert_eq!(method, "plugin.hello");
-            let identity = value::get(&params, "plugin").expect("identity");
-            assert_eq!(value::optional_str(identity, "id"), Some("org.test.bridge"));
+            assert_eq!(method, protocol::method::HELLO);
+            let hello: protocol::Hello = protocol::from_value(params).expect("hello");
+            assert_eq!(hello.plugin, "org.test.bridge");
+            assert_eq!(hello.protocol, wire::PROTOCOL_VERSION);
             host.send(LppMessage::success(1, Value::Nil));
             host
         }
@@ -398,27 +435,37 @@ mod tests {
         }
 
         fn analyze(&mut self, id: u64, name: &str) {
+            let start = protocol::RunStart {
+                run_id: "run-1".to_owned(),
+                analyzer: "head".to_owned(),
+                target: protocol::Target::Files,
+                inputs: vec![protocol::FileInfo {
+                    file_id: "file_1".to_owned(),
+                    name: name.to_owned(),
+                    size: 4,
+                    mime: None,
+                    view_path: None,
+                    root: None,
+                    root_path: None,
+                    node_id: None,
+                    deleted: false,
+                    timestamps: protocol::Timestamps::default(),
+                }],
+                options: Default::default(),
+                profile: Default::default(),
+                locale: "zh-CN".to_owned(),
+            };
             self.send(LppMessage::request(
                 id,
-                "analyzer.analyze",
-                value::map([
-                    ("analyzer", Value::from("test.head")),
-                    (
-                        "file",
-                        value::map([
-                            ("file_id", Value::from("file_1")),
-                            ("name", Value::from(name)),
-                            ("size", Value::from(4_u64)),
-                        ]),
-                    ),
-                ]),
+                protocol::method::RUN_START,
+                protocol::to_value(&start).expect("run.start"),
             ));
         }
 
         fn shutdown(mut self) {
             self.send(LppMessage::request(
                 100,
-                "plugin.shutdown",
+                protocol::method::SHUTDOWN,
                 Value::Map(Vec::new()),
             ));
             assert!(matches!(
@@ -439,13 +486,20 @@ mod tests {
     }
 
     #[test]
+    fn describe_reports_the_plugin_without_a_host() {
+        let hello = describe(test_entry).expect("describe");
+        assert_eq!(hello.plugin, "org.test.bridge");
+        assert_eq!(hello.analyzers, vec!["head"]);
+    }
+
+    #[test]
     fn nested_host_reads_are_answered_over_the_same_pipes() {
         let mut host = FakeHost::start();
         host.analyze(2, "a.bin");
         let LppMessage::Request { id, method, .. } = host.receive() else {
             panic!("expected file.read");
         };
-        assert_eq!(method, "file.read");
+        assert_eq!(method, protocol::method::FILE_READ);
         assert_eq!(id % 2, 1);
         host.send(LppMessage::success(id, Value::Binary(b"kali".to_vec())));
         let LppMessage::Response {
@@ -466,9 +520,9 @@ mod tests {
         let mut host = FakeHost::start();
         host.analyze(2, "wait");
         let LppMessage::Request { id, method, .. } = host.receive() else {
-            panic!("expected host.progress");
+            panic!("expected run.progress");
         };
-        assert_eq!(method, "host.progress");
+        assert_eq!(method, protocol::method::RUN_PROGRESS);
         host.send(LppMessage::success(id, Value::Nil));
         host.send(LppMessage::Cancel {
             v: wire::PROTOCOL_VERSION,
