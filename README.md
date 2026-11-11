@@ -28,6 +28,8 @@ just fmt
 
 插件包目录包含 `plugin.toml`、动态库、`schema.json` 与 `locales/`；`lc-plugin-host` 位于 LovelyCarve 主程序旁。主仓库的 `just pack-plugins` 为每个插件生成 `.lcpkg`，在 LovelyCarve「设置 → 插件」或命令行 `plugins create` 安装。已发现的插件视为可信代码；隔离进程不提供操作系统权限沙箱。
 
+资产、检材输入与原生插件的信任边界见 [安全模型](SECURITY_MODEL.md)。
+
 协议、清单、记录结构与 SDK 见主仓库的 [插件协议](https://github.com/LovelyTeams/LovelyCarve/blob/main/docs/PLUGIN_PROTOCOL.md)，linuxinfo 的来源与限制见 [linuxinfo 文档](https://github.com/LovelyTeams/LovelyCarve/blob/main/docs/LINUXINFO.md)。
 
 ## 许可
