@@ -1,5 +1,3 @@
-use std::fmt;
-
 use rmpv::Value;
 
 use crate::value;
@@ -8,7 +6,8 @@ use crate::value;
 /// `message`. Errors returned by plugin code reach the host unchanged; host
 /// call failures carry the host's code (for example
 /// `EVIDENCE_PATH_NOT_FOUND` or `RESOURCE_LIMIT`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{code}: {message}")]
 pub struct Error {
     pub code: String,
     pub message: String,
@@ -64,14 +63,6 @@ impl Error {
         }
     }
 }
-
-impl fmt::Display for Error {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "{}: {}", self.code, self.message)
-    }
-}
-
-impl std::error::Error for Error {}
 
 impl From<std::io::Error> for Error {
     fn from(error: std::io::Error) -> Self {
