@@ -1,6 +1,7 @@
 # English labels of the linuxinfo package. Keys are stable ids; the
 # Chinese defaults are in plugin.toml and the record schemas.
 "plugin.name" = "Linux information"
+"plugin.description" = "Base information of a detected Linux system: system, users, logins, network, services, software and user traces"
 "analyzer.linuxbaseinfo" = "Linux base information"
 "category.baseinfo" = "Base information"
 

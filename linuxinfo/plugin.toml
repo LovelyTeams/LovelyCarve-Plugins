@@ -3,6 +3,9 @@
 id = "org.lovelycarve.linuxinfo"
 name = "Linux信息"
 version = "2.0.0"
+description = "识别出的 Linux 系统的基本信息：系统、用户、登录、网络、服务、软件与用户痕迹"
+publisher = "LovelyTeams"
+license = "AGPL-3.0-only"
 protocol = 2
 # linuxinfo.dll / liblinuxinfo.so, built from this crate by `just build-plugins`.
 library = "linuxinfo"

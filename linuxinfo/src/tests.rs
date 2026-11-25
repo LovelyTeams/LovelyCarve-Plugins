@@ -192,6 +192,14 @@ fn every_sub_item_emits_typed_records_with_sources() {
     assert!(facts["users"].as_ref().is_some_and(Value::is_map));
 }
 
+/// Every record of a full run, values and sources included: a change to
+/// what the analyzer reports shows up as a reviewed snapshot diff.
+#[test]
+fn a_full_run_matches_its_snapshot() {
+    let fixtures = fixtures();
+    insta::assert_snapshot!(run(&fixtures, &[]).snapshot());
+}
+
 #[test]
 fn selected_sub_items_limit_the_run() {
     let fixtures = fixtures();

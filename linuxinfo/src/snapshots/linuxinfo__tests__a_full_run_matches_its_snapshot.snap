@@ -1,0 +1,143 @@
+---
+source: linuxinfo/src/tests.rs
+expression: "run(&fixtures, &[]).snapshot()"
+---
+linux.systeminfo "主机名"
+  key = "hostname"
+  name = "主机名"
+  value = "kali-box"
+  from "part:0/etc/hostname"
+linux.systeminfo "系统"
+  key = "PRETTY_NAME"
+  name = "系统"
+  value = "Kali GNU/Linux Rolling"
+  from "part:0/etc/os-release"
+linux.systeminfo "操作系统类型"
+  key = "NAME"
+  name = "操作系统类型"
+  value = "Kali GNU/Linux"
+  from "part:0/etc/os-release"
+linux.systeminfo "操作系统名称"
+  key = "ID"
+  name = "操作系统名称"
+  value = "kali"
+  from "part:0/etc/os-release"
+linux.timezone "Asia/Shanghai"
+  timezone = "Asia/Shanghai"
+  from "part:0/etc/timezone"
+linux.user "root"
+  gecos = "root"
+  gid = 0
+  home = "/root"
+  password_algo = "yescrypt"
+  password_hash = "$y$j9T$abc"
+  password_last_change = "2024-05-12T00:00:00+00:00"
+  password_max_days = 99999
+  password_min_days = 0
+  password_warn_days = 7
+  shell = "/bin/bash"
+  uid = 0
+  user_class = "常规用户"
+  username = "root"
+  from "part:0/etc/passwd"
+  from "part:0/etc/shadow"
+linux.user "kali"
+  gecos = "Kali,,,"
+  gid = 1000
+  home = "/home/kali"
+  password_last_change = "2024-05-12T00:00:00+00:00"
+  password_max_days = 99999
+  password_min_days = 0
+  password_status = "已锁定"
+  password_warn_days = 7
+  shell = "/usr/bin/zsh"
+  uid = 1000
+  user_class = "常规用户"
+  username = "kali"
+  from "part:0/etc/passwd"
+  from "part:0/etc/shadow"
+linux.group "root"
+  gid = 0
+  group = "root"
+  members = "无"
+  from "part:0/etc/group"
+linux.group "sudo"
+  gid = 27
+  group = "sudo"
+  members = "kali"
+  from "part:0/etc/group"
+linux.shellhistory "sudo -i"
+  command = "sudo -i"
+  line = 1
+  shell = "zsh"
+  time = "2023-11-14T22:16:40+00:00"
+  user = "kali"
+  from "part:1/kali/.zsh_history" ("第 1 行")
+linux.shellhistory "id"
+  command = "id"
+  line = 2
+  shell = "bash"
+  time = "2023-11-14T22:15:00+00:00"
+  user = "root"
+  from "part:0/root/.bash_history" ("第 2 行")
+linux.login "kali @ pts/0"
+  duration = 600
+  logout_time = "2023-11-14T22:23:20+00:00"
+  record = 0
+  remote_host = "10.0.0.5"
+  terminal = "pts/0"
+  time = "2023-11-14T22:13:20+00:00"
+  user = "kali"
+  from "part:0/var/log/wtmp" @0+384
+linux.boot "开机"
+  event = "开机"
+  record = 2
+  time = "2023-11-14T21:56:40+00:00"
+  from "part:0/var/log/wtmp" @768+384
+linux.host "localhost"
+  address = "127.0.0.1"
+  hostname = "localhost"
+  line = 1
+  from "part:0/etc/hosts" ("第 1 行")
+linux.service "ssh.service"
+  description = "OpenBSD Secure Shell server"
+  enabled = "是"
+  exec_start = "/usr/sbin/sshd -D"
+  name = "ssh.service"
+  restart = "no"
+  service_type = "simple"
+  unit = "usr/lib/systemd/system/ssh.service"
+  from "part:0/usr/lib/systemd/system/ssh.service"
+linux.software "zsh"
+  arch = "amd64"
+  manager = "dpkg"
+  name = "zsh"
+  status = "已安装"
+  version = "5.9"
+  from "part:0/var/lib/dpkg/status"
+linux.cron "cd / && run-parts --report /etc/cron.hourly"
+  command = "cd / && run-parts --report /etc/cron.hourly"
+  schedule = "17 * * * *"
+  user = "root"
+  from "part:0/etc/crontab"
+linux.autostart "ssh.service"
+  description = "OpenBSD Secure Shell server"
+  exec_start = "/usr/sbin/sshd -D"
+  extra = {"linux.service_type": "simple", "linux.restart": "no", "linux.enabled": "是"}
+  name = "ssh.service"
+  origin = "usr/lib/systemd/system/ssh.service"
+  target = "systemd/multi-user.target.wants"
+  from "part:0/etc/systemd/system/multi-user.target.wants/ssh.service"
+  from "part:0/usr/lib/systemd/system/ssh.service"
+profile.fact "timezone"
+  key = "timezone"
+  system = "linux@part:0"
+  value = "Asia/Shanghai"
+profile.fact "hostname"
+  key = "hostname"
+  system = "linux@part:0"
+  value = "kali-box"
+profile.fact "users"
+  key = "users"
+  system = "linux@part:0"
+  value = {"0": "root", "1000": "kali"}

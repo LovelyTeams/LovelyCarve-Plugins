@@ -19,6 +19,9 @@ quick-xml = "0.37.5"
 flate2 = "1"
 
 [dev-dependencies]
+# Snapshots of whole runs (`TestRun::snapshot`); review changes with
+# `cargo insta review` or rerun with INSTA_UPDATE=always.
+insta = { version = "1", default-features = false }
 lovelycarve-plugin = { path = "../sdk", features = ["testing"] }
 
 [lints.rust]

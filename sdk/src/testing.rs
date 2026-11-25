@@ -137,6 +137,96 @@ impl TestRun {
         }
         counts
     }
+
+    /// Everything the run produced as stable text, for snapshot tests
+    /// (`insta::assert_snapshot!(run.snapshot())`): the summary, the
+    /// warnings, then every record in emission order with its title,
+    /// severity, values by field id and sources. Progress reports and the
+    /// fixture's node ids are left out, so the text only changes when what
+    /// the plugin reports changes.
+    pub fn snapshot(&self) -> String {
+        let mut out = String::new();
+        if let Some(summary) = &self.summary {
+            out.push_str(&format!("summary: {summary:?}\n"));
+        }
+        for (code, message, file) in &self.warnings {
+            match file {
+                Some(file) => out.push_str(&format!("warning {code} {file:?}: {message:?}\n")),
+                None => out.push_str(&format!("warning {code}: {message:?}\n")),
+            }
+        }
+        for record in &self.records {
+            out.push_str(&format!("{} {:?}", record.record_type, record.title));
+            if let Some(severity) = &record.severity {
+                out.push_str(&format!(" [{severity:?}]"));
+            }
+            out.push('\n');
+            for (field, value) in &record.values {
+                if !value.is_nil() {
+                    out.push_str(&format!("  {field} = {}\n", snapshot_value(value)));
+                }
+            }
+            for source in &record.sources {
+                let place = [source.root.as_deref(), source.path.as_deref()]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join("/");
+                out.push_str(&format!("  from {place:?}"));
+                if let (Some(offset), Some(length)) = (source.offset, source.length) {
+                    out.push_str(&format!(" @{offset}+{length}"));
+                }
+                if let Some(note) = &source.note {
+                    out.push_str(&format!(" ({note:?})"));
+                }
+                out.push('\n');
+            }
+        }
+        out
+    }
+}
+
+/// One value in [`TestRun::snapshot`]: strings escaped, bytes as hex, maps
+/// in their own order.
+fn snapshot_value(value: &Value) -> String {
+    match value {
+        Value::Nil => "nil".to_owned(),
+        Value::Boolean(flag) => flag.to_string(),
+        Value::Integer(number) => number.to_string(),
+        Value::F32(number) => number.to_string(),
+        Value::F64(number) => number.to_string(),
+        Value::String(text) => format!("{:?}", text.as_str().unwrap_or_default()),
+        Value::Binary(bytes) => format!(
+            "0x{}",
+            bytes
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        ),
+        Value::Array(items) => format!(
+            "[{}]",
+            items
+                .iter()
+                .map(snapshot_value)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Map(entries) => format!(
+            "{{{}}}",
+            entries
+                .iter()
+                .map(|(key, item)| format!("{}: {}", snapshot_value(key), snapshot_value(item)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Value::Ext(kind, bytes) => format!(
+            "ext({kind}, 0x{})",
+            bytes
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+        ),
+    }
 }
 
 /// A plugin instance served by an in-memory host.
@@ -879,6 +969,33 @@ mod tests {
             User::schema().fields[2].kind,
             crate::schema::FieldKind::Path
         );
+    }
+
+    #[test]
+    fn snapshots_are_stable_text_of_what_a_run_reported() {
+        let root = tempfile::tempdir().expect("root");
+        write(
+            &root.path().join("etc/passwd"),
+            "root:x:0:0:root:/root:/bin/bash\nbroken\n",
+        );
+        write(&root.path().join("etc/hostname"), "forensic-box\n");
+        write(&root.path().join("root/.bash_history"), "echo \"hi\"\n");
+        let snapshot = || {
+            Harness::new(test_plugin)
+                .run("users", Fixture::system("linux", root.path()))
+                .expect("run")
+                .snapshot()
+        };
+        let first = snapshot();
+        assert_eq!(first, snapshot(), "the same run gives the same text");
+        for line in [
+            "warning MALFORMED_LINE \"passwd\": \"第 2 行字段不足\"\n",
+            "test.user \"root (0)\"\n  home = \"/root\"\n  name = \"root\"\n  uid = 0\n  from \"part:0/etc/passwd\" (\"第 1 行\")\n",
+            "  command = \"echo \\\"hi\\\"\"\n",
+        ] {
+            assert!(first.contains(line), "{line:?} in\n{first}");
+        }
+        assert!(!first.contains("progress"), "{first}");
     }
 
     #[test]
